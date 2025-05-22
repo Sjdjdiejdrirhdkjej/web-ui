@@ -37,6 +37,14 @@ git clone https://github.com/browser-use/web-ui.git
 cd web-ui
 ```
 
+#### Testing a Specific Feature Branch (e.g., Selenium Support)
+To test features currently under development, such as the new Selenium browser support, you might need to clone a specific branch. For example, to clone the `feature/selenium-browser-support` branch:
+```bash
+git clone https://github.com/browser-use/web-ui.git -b feature/selenium-browser-support
+cd web-ui
+```
+Then proceed with the setup steps below (Python environment, dependencies).
+
 #### Step 2: Set Up Python Environment
 We recommend using [uv](https://docs.astral.sh/uv/) for managing the Python environment.
 
@@ -75,6 +83,30 @@ To install all browsers:
 ```bash
 playwright install
 ```
+
+#### Step 3.1: Setting up for Selenium (If you plan to use Selenium)
+
+If you intend to use Selenium as the browser engine, you'll need to install the `selenium` package and ensure ChromeDriver is set up.
+
+1.  **Install Selenium Package:**
+    If you haven't already installed all dependencies from `requirements.txt` (which should include Selenium), you can install it separately:
+    ```bash
+    uv pip install selenium
+    # Or using pip:
+    # pip install selenium
+    ```
+
+2.  **Setup ChromeDriver (for Selenium):**
+    Selenium requires a WebDriver executable that matches your Chrome browser version.
+    *   **Automatic Discovery:** The application will attempt to find `chromedriver` automatically by:
+        *   Checking the `CHROMEDRIVER_PATH` environment variable.
+        *   Searching your system's PATH.
+        *   Looking in common locations: `./chromedriver` (project root), `~/.local/bin/chromedriver`, `.pythonlibs/bin/chromedriver` (for Replit-like environments), and standard system binary paths like `/usr/local/bin/chromedriver`, `/usr/bin/chromedriver`.
+        *   Checking standard Nix environment profile paths.
+    *   **Manual Configuration (Recommended for specific versions):**
+        *   **Download:** Get ChromeDriver from the [official ChromeDriver - WebDriver for Chrome](https://chromedriver.chromium.org/downloads) site. *Ensure the version matches your installed Chrome browser version.*
+        *   **Option A (Environment Variable):** Set the `CHROMEDRIVER_PATH` environment variable to the full path of your downloaded `chromedriver` executable.
+        *   **Option B (UI Configuration):** In the WebUI's "Browser Settings" tab, use the "WebDriver Executable Path (Optional)" field to provide the full path to `chromedriver`. This will override auto-discovery.
 
 #### Step 4: Configure Environment
 1. Create a copy of the example environment file:
@@ -131,6 +163,12 @@ CHROME_PERSISTENT_SESSION=true docker compose up --build
   - Can be changed by setting `VNC_PASSWORD` in your `.env` file
 
 ## Usage
+
+### Selecting the Browser Engine
+
+This WebUI supports both Playwright (default) and Selenium for browser automation. You can choose your preferred engine in the **"Browser Settings"** tab using the **"Browser Engine"** radio buttons.
+- **Playwright:** Offers robust automation capabilities and detailed browser context information. Ensure you have installed Playwright browsers (see "Install Browsers in Playwright" above).
+- **Selenium:** A widely-used alternative. Requires ChromeDriver to be set up as described in "Setting up for Selenium".
 
 ### Local Setup
 1.  **Run the WebUI:**
