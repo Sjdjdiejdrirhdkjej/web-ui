@@ -4,7 +4,7 @@ import pyperclip
 from typing import Optional, Type
 from pydantic import BaseModel
 from browser_use.agent.views import ActionResult
-from browser_use.browser.context import BrowserContext
+from src.browser.base import AbstractBrowserContext # Changed
 from browser_use.controller.service import Controller, DoneAction
 from main_content_extractor import MainContentExtractor
 from browser_use.controller.views import (
@@ -40,10 +40,10 @@ class CustomController(Controller):
             return ActionResult(extracted_content=text)
 
         @self.registry.action("Paste text from clipboard")
-        async def paste_from_clipboard(browser: BrowserContext):
+        async def paste_from_clipboard(browser: AbstractBrowserContext): # Changed type hint
             text = pyperclip.paste()
             # send text to browser
             page = await browser.get_current_page()
-            await page.keyboard.type(text)
+            await page.type_active(text) # Changed method call
 
             return ActionResult(extracted_content=text)

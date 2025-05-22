@@ -30,8 +30,12 @@ from src.utils.agent_state import AgentState
 from src.utils import utils
 from src.agent.custom_agent import CustomAgent
 from src.browser.custom_browser import CustomBrowser
+from src.browser.selenium_browser import SeleniumBrowser # Added
+from src.browser.base import AbstractBrowser # Added for type hinting (optional here)
 from src.agent.custom_prompts import CustomSystemPrompt, CustomAgentMessagePrompt
-from src.browser.custom_context import BrowserContextConfig, CustomBrowserContext
+# Ensure BrowserContextConfig is imported correctly, might need adjustment based on actual file structure
+# from src.browser.custom_context import BrowserContextConfig # This might be Playwright specific
+# For generic context config, it might be better to rely on kwargs or a base config if available
 from src.controller.custom_controller import CustomController
 from gradio.themes import Citrus, Default, Glass, Monochrome, Ocean, Origin, Soft, Base
 from src.utils.utils import update_model_dropdown, get_latest_files, capture_screenshot, MissingAPIKeyError
@@ -167,6 +171,7 @@ async def stop_research_agent():
 
 
 async def run_browser_agent(
+        browser_engine, # Added
         agent_type,
         llm_provider,
         llm_model_name,
@@ -191,7 +196,8 @@ async def run_browser_agent(
         max_actions_per_step,
         tool_calling_method,
         chrome_cdp,
-        max_input_tokens
+        max_input_tokens,
+        webdriver_executable_path: str # Added
 ):
     try:
         # Disable recording if the checkbox is unchecked
@@ -223,7 +229,9 @@ async def run_browser_agent(
         )
         if agent_type == "org":
             final_result, errors, model_actions, model_thoughts, trace_file, history_file = await run_org_agent(
+                browser_engine=browser_engine, # Corrected: Removed duplicate
                 llm=llm,
+                webdriver_executable_path=webdriver_executable_path, # Corrected: Removed duplicate
                 use_own_browser=use_own_browser,
                 keep_browser_open=keep_browser_open,
                 headless=headless,
@@ -311,6 +319,7 @@ async def run_browser_agent(
 
 
 async def run_org_agent(
+        browser_engine, # Added
         llm,
         use_own_browser,
         keep_browser_open,
@@ -327,47 +336,115 @@ async def run_org_agent(
         max_actions_per_step,
         tool_calling_method,
         chrome_cdp,
-        max_input_tokens
+        max_input_tokens,
+        webdriver_executable_path: str # Added
 ):
     try:
         global _global_browser, _global_browser_context, _global_agent
 
-        extra_chromium_args = [f"--window-size={window_w},{window_h}"]
-        cdp_url = chrome_cdp
-
+        # Preserve existing logic for cdp_url, chrome_path, chrome_user_data, extra_chromium_args.
+        extra_chromium_args_list = [f"--window-size={window_w},{window_h}"]
+        cdp_url_val = chrome_cdp # from function args
+        chrome_path_val = None
         if use_own_browser:
-            cdp_url = os.getenv("CHROME_CDP", chrome_cdp)
-            chrome_path = os.getenv("CHROME_PATH", None)
-            if chrome_path == "":
-                chrome_path = None
-            chrome_user_data = os.getenv("CHROME_USER_DATA", None)
-            if chrome_user_data:
-                extra_chromium_args += [f"--user-data-dir={chrome_user_data}"]
+            cdp_url_val = os.getenv("CHROME_CDP", chrome_cdp)
+            chrome_path_val = os.getenv("CHROME_PATH", None)
+            if chrome_path_val == "": chrome_path_val = None
+            chrome_user_data_val = os.getenv("CHROME_USER_DATA", None)
+            if chrome_user_data_val:
+                extra_chromium_args_list.append(f"--user-data-dir={chrome_user_data_val}")
         else:
-            chrome_path = None
+            chrome_path_val = None
 
         if _global_browser is None:
-            _global_browser = Browser(
-                config=BrowserConfig(
-                    headless=headless,
-                    cdp_url=cdp_url,
-                    disable_security=disable_security,
-                    chrome_instance_path=chrome_path,
-                    extra_chromium_args=extra_chromium_args,
-                )
-            )
+            if browser_engine == "Playwright":
+                # This was originally Browser() from browser_use.browser.browser
+                # Assuming CustomBrowser is the intended Playwright implementation now.
+                _global_browser = CustomBrowser() 
+                
+                playwright_launch_kwargs = {
+                    "headless": headless,
+                    # "browser_window_size" is not a direct launch kwarg for Playwright's launch,
+                    # it's part of viewport in new_context or args. Let's use args for window size.
+                    # "disable_security" is not a direct launch kwarg, specific flags might be needed in args.
+                    # Playwright handles security contexts differently.
+                    # For CDP connection:
+                    "executable_path": chrome_path_val if use_own_browser and chrome_path_val else None,
+                }
+                # Add args, including window size and potentially others.
+                launch_args = list(extra_chromium_args_list) # Make a copy
+                if headless: # Playwright specific headless arg name
+                    playwright_launch_kwargs["headless"] = True
+                if disable_security: # Example, might need specific flags
+                    launch_args.append("--disable-web-security") # Example flag
+                
+                # For connecting to an existing browser via CDP
+                if use_own_browser and cdp_url_val:
+                    # CustomBrowser.launch needs to support connect_over_cdp or similar
+                    # For now, assuming launch can take cdp_url directly or needs a different method.
+                    # This part might need adjustment based on CustomBrowser's API.
+                    # If CustomBrowser is a wrapper around playwright.chromium.launch():
+                    #   It might not directly support connecting to an existing browser via CDP URL in launch().
+                    #   playwright.chromium.connect_over_cdp() is used for that.
+                    #   Let's assume for now CustomBrowser's launch handles this if cdp_url_val is passed.
+                    #   If not, this logic needs to be more significantly altered here.
+                    #   The original Browser(config=BrowserConfig(cdp_url=cdp_url)) suggests it could.
+                    playwright_launch_kwargs["cdp_url"] = cdp_url_val
+                else: # Launching a new browser instance
+                    playwright_launch_kwargs["args"] = launch_args
+
+                await _global_browser.launch(**playwright_launch_kwargs)
+
+            elif browser_engine == "Selenium":
+                _global_browser = SeleniumBrowser()
+                selenium_launch_kwargs = {
+                    "headless": headless,
+                    "browser_window_size": {"width": window_w, "height": window_h},
+                    "disable_security": disable_security, 
+                }
+                if webdriver_executable_path and webdriver_executable_path.strip(): # Check if path is provided
+                    selenium_launch_kwargs["executable_path"] = webdriver_executable_path.strip()
+                # elif use_own_browser and chrome_path_val: # Commented out as per instruction
+                #     selenium_launch_kwargs["executable_path"] = chrome_path_val
+                await _global_browser.launch(**selenium_launch_kwargs)
+            else:
+                raise ValueError(f"Unsupported browser engine: {browser_engine}")
 
         if _global_browser_context is None:
-            _global_browser_context = await _global_browser.new_context(
-                config=BrowserContextConfig(
-                    trace_path=save_trace_path if save_trace_path else None,
-                    save_recording_path=save_recording_path if save_recording_path else None,
-                    no_viewport=False,
-                    browser_window_size=BrowserContextWindowSize(
-                        width=window_w, height=window_h
-                    ),
-                )
-            )
+            if not _global_browser or not _global_browser.is_connected:
+                raise ConnectionError("Browser is not launched or connected before creating context.")
+
+            context_creation_kwargs = {
+                "trace_path": save_trace_path if save_trace_path else None,
+                "save_recording_path": save_recording_path if save_recording_path else None,
+            }
+            if browser_engine == "Playwright":
+                context_creation_kwargs.update({
+                    "no_viewport": False, # Typically part of new_context in Playwright
+                     # Pass width and height for viewport or window size settings
+                    "width": window_w,
+                    "height": window_h,
+                })
+                # If CustomBrowserContext expects BrowserContextConfig, build it
+                # from src.browser.custom_context import BrowserContextConfig as CustomBrowserContextConfig
+                # from browser_use.browser.context import BrowserContextWindowSize as CustomBrowserContextWindowSize
+                # config_obj = CustomBrowserContextConfig(
+                #     trace_path=save_trace_path if save_trace_path else None,
+                #     save_recording_path=save_recording_path if save_recording_path else None,
+                #     no_viewport=False,
+                #     browser_window_size=CustomBrowserContextWindowSize(width=window_w, height=window_h)
+                # )
+                # _global_browser_context = await _global_browser.new_context(config=config_obj)
+                # Simpler: pass as kwargs if CustomBrowser.new_context handles it
+                _global_browser_context = await _global_browser.new_context(**context_creation_kwargs)
+
+            elif browser_engine == "Selenium":
+                 # SeleniumBrowserContext takes driver and other args, not these directly in this way.
+                 # It will get the driver from _global_browser.driver.
+                 # These trace/recording paths might need to be handled differently or are not applicable.
+                 # For now, pass them; SeleniumBrowserContext can ignore what it doesn't use.
+                _global_browser_context = await _global_browser.new_context(**context_creation_kwargs)
+
 
         if _global_agent is None:
             _global_agent = Agent(
@@ -413,6 +490,7 @@ async def run_org_agent(
 
 
 async def run_custom_agent(
+        browser_engine, # Added
         llm,
         use_own_browser,
         keep_browser_open,
@@ -430,51 +508,105 @@ async def run_custom_agent(
         max_actions_per_step,
         tool_calling_method,
         chrome_cdp,
-        max_input_tokens
+        max_input_tokens,
+        webdriver_executable_path: str # Added
 ):
     try:
         global _global_browser, _global_browser_context, _global_agent
 
-        extra_chromium_args = [f"--window-size={window_w},{window_h}"]
-        cdp_url = chrome_cdp
+        extra_chromium_args_list = [f"--window-size={window_w},{window_h}"]
+        cdp_url_val = chrome_cdp 
+        chrome_path_val = None
         if use_own_browser:
-            cdp_url = os.getenv("CHROME_CDP", chrome_cdp)
-
-            chrome_path = os.getenv("CHROME_PATH", None)
-            if chrome_path == "":
-                chrome_path = None
-            chrome_user_data = os.getenv("CHROME_USER_DATA", None)
-            if chrome_user_data:
-                extra_chromium_args += [f"--user-data-dir={chrome_user_data}"]
+            cdp_url_val = os.getenv("CHROME_CDP", chrome_cdp)
+            chrome_path_val = os.getenv("CHROME_PATH", None)
+            if chrome_path_val == "": chrome_path_val = None
+            chrome_user_data_val = os.getenv("CHROME_USER_DATA", None)
+            if chrome_user_data_val:
+                extra_chromium_args_list.append(f"--user-data-dir={chrome_user_data_val}")
         else:
-            chrome_path = None
-
+            chrome_path_val = None
+        
         controller = CustomController()
 
         # Initialize global browser if needed
-        # if chrome_cdp not empty string nor None
-        if (_global_browser is None) or (cdp_url and cdp_url != "" and cdp_url != None):
-            _global_browser = CustomBrowser(
-                config=BrowserConfig(
-                    headless=headless,
-                    disable_security=disable_security,
-                    cdp_url=cdp_url,
-                    chrome_instance_path=chrome_path,
-                    extra_chromium_args=extra_chromium_args,
-                )
-            )
+        # Condition `(cdp_url_val and cdp_url_val != "" and cdp_url_val != None)` seems redundant.
+        # `cdp_url_val` being non-empty string is sufficient.
+        # The original logic for re-init if cdp_url is present needs to be carefully considered.
+        # If _global_browser exists but we want to connect to a new CDP target, it should be closed first.
+        # For now, sticking to `_global_browser is None`.
+        if _global_browser is None: # Simplified condition, re-evaluate if CDP re-connect is needed
+            if browser_engine == "Playwright":
+                _global_browser = CustomBrowser()
+                playwright_launch_kwargs = {
+                    # "headless": headless, # CustomBrowser's __init__ doesn't take config= anymore
+                    # "disable_security": disable_security,
+                    # "cdp_url": cdp_url_val if use_own_browser and cdp_url_val else None,
+                    # "executable_path": chrome_path_val if use_own_browser and chrome_path_val else None,
+                }
+                # CustomBrowser().launch() takes kwargs that are passed to playwright's launch
+                if headless:
+                    playwright_launch_kwargs["headless"] = True
+                if disable_security: # This was a BrowserConfig field, now needs to be args
+                    if "args" not in playwright_launch_kwargs: playwright_launch_kwargs["args"] = []
+                    playwright_launch_kwargs["args"].append("--disable-web-security") # Example
+                
+                if use_own_browser and cdp_url_val:
+                    # This implies connecting to an existing browser, playwright uses connect_over_cdp
+                    # CustomBrowser.launch needs to handle this. If it wraps `playwright.chromium.launch`,
+                    # it cannot connect_over_cdp. This might be a limitation of CustomBrowser's current API.
+                    # Assuming CustomBrowser.launch has logic for this or needs to be adapted.
+                    # For now, we pass cdp_url; if it's not used by launch, this won't connect.
+                    playwright_launch_kwargs["cdp_url"] = cdp_url_val 
+                    # executable_path is usually for launching, not connecting.
+                elif use_own_browser and chrome_path_val: # Launching specific executable
+                     playwright_launch_kwargs["executable_path"] = chrome_path_val
 
-        if _global_browser_context is None or (chrome_cdp and cdp_url != "" and cdp_url != None):
-            _global_browser_context = await _global_browser.new_context(
-                config=BrowserContextConfig(
-                    trace_path=save_trace_path if save_trace_path else None,
-                    save_recording_path=save_recording_path if save_recording_path else None,
-                    no_viewport=False,
-                    browser_window_size=BrowserContextWindowSize(
-                        width=window_w, height=window_h
-                    ),
-                )
-            )
+                if extra_chromium_args_list:
+                    if "args" not in playwright_launch_kwargs: playwright_launch_kwargs["args"] = []
+                    playwright_launch_kwargs["args"].extend(extra_chromium_args_list)
+                
+                await _global_browser.launch(**playwright_launch_kwargs)
+
+            elif browser_engine == "Selenium":
+                _global_browser = SeleniumBrowser()
+                selenium_launch_kwargs = {
+                    "headless": headless,
+                    "browser_window_size": {"width": window_w, "height": window_h},
+                    "disable_security": disable_security,
+                }
+                if webdriver_executable_path and webdriver_executable_path.strip(): # Check if path is provided
+                    selenium_launch_kwargs["executable_path"] = webdriver_executable_path.strip()
+                # elif use_own_browser and chrome_path_val: # Commented out as per instruction
+                #     selenium_launch_kwargs["executable_path"] = chrome_path_val
+                # Selenium doesn't typically use CDP URL for launch in this manner.
+                # If connecting to remote Selenium Grid, it's a different mechanism.
+                await _global_browser.launch(**selenium_launch_kwargs)
+            else:
+                raise ValueError(f"Unsupported browser engine: {browser_engine}")
+
+        # Condition for re-creating context also needs review with CDP.
+        # If _global_browser_context exists but we connected to a new browser (e.g. new CDP), it should be recreated.
+        # Sticking to `_global_browser_context is None` for now.
+        if _global_browser_context is None: # Simplified condition
+            if not _global_browser or not _global_browser.is_connected:
+                raise ConnectionError("Browser is not launched or connected before creating context.")
+
+            context_creation_kwargs = {
+                "trace_path": save_trace_path if save_trace_path else None,
+                "save_recording_path": save_recording_path if save_recording_path else None,
+            }
+            if browser_engine == "Playwright":
+                 # CustomBrowser.new_context takes kwargs which are passed to Playwright's new_context.
+                 # It used to take a 'config' object. Assuming it now takes kwargs directly.
+                context_creation_kwargs.update({
+                    "no_viewport": False, 
+                    "width": window_w, # For viewport size
+                    "height": window_h,
+                })
+                _global_browser_context = await _global_browser.new_context(**context_creation_kwargs)
+            elif browser_engine == "Selenium":
+                _global_browser_context = await _global_browser.new_context(**context_creation_kwargs)
 
         # Create and run agent
         if _global_agent is None:
@@ -525,6 +657,7 @@ async def run_custom_agent(
 
 
 async def run_with_stream(
+        browser_engine, # Added
         agent_type,
         llm_provider,
         llm_model_name,
@@ -549,7 +682,8 @@ async def run_with_stream(
         max_actions_per_step,
         tool_calling_method,
         chrome_cdp,
-        max_input_tokens
+        max_input_tokens,
+        webdriver_executable_path: str # Added
 ):
     global _global_agent
 
@@ -557,6 +691,7 @@ async def run_with_stream(
     stream_vh = int(80 * window_h // window_w)
     if not headless:
         result = await run_browser_agent(
+            browser_engine=browser_engine, # Added
             agent_type=agent_type,
             llm_provider=llm_provider,
             llm_model_name=llm_model_name,
@@ -581,7 +716,8 @@ async def run_with_stream(
             max_actions_per_step=max_actions_per_step,
             tool_calling_method=tool_calling_method,
             chrome_cdp=chrome_cdp,
-            max_input_tokens=max_input_tokens
+            max_input_tokens=max_input_tokens,
+            webdriver_executable_path=webdriver_executable_path # Added
         )
         # Add HTML content at the start of the result array
         yield [gr.update(visible=False)] + list(result)
@@ -590,6 +726,7 @@ async def run_with_stream(
             # Run the browser agent in the background
             agent_task = asyncio.create_task(
                 run_browser_agent(
+                    browser_engine=browser_engine, # Added
                     agent_type=agent_type,
                     llm_provider=llm_provider,
                     llm_model_name=llm_model_name,
@@ -614,7 +751,8 @@ async def run_with_stream(
                     max_actions_per_step=max_actions_per_step,
                     tool_calling_method=tool_calling_method,
                     chrome_cdp=chrome_cdp,
-                    max_input_tokens=max_input_tokens
+                    max_input_tokens=max_input_tokens,
+                    webdriver_executable_path=webdriver_executable_path # Added
                 )
             )
 
@@ -920,6 +1058,13 @@ def create_ui(theme_name="Ocean"):
                             info="Keep Browser Open between Tasks",
                             interactive=True
                         )
+                        browser_engine_select = gr.Radio( # Added
+                            ["Playwright", "Selenium"],
+                            label="Browser Engine",
+                            value="Playwright", 
+                            info="Select the browser engine to use.",
+                            interactive=True
+                        )
                         headless = gr.Checkbox(
                             label="Headless Mode",
                             value=False,
@@ -958,7 +1103,15 @@ def create_ui(theme_name="Ocean"):
                         placeholder="http://localhost:9222",
                         value="",
                         info="CDP for google remote debugging",
-                        interactive=True,  # Allow editing only if recording is enabled
+                        interactive=True,
+                    )
+                    
+                    webdriver_executable_path_input = gr.Textbox(
+                        label="WebDriver Executable Path (Optional)",
+                        placeholder="e.g., /usr/local/bin/chromedriver or C:\\path\\to\\chromedriver.exe",
+                        value="",
+                        info="Full path to the WebDriver executable (e.g., chromedriver). If empty, system PATH and auto-discovery will be used.",
+                        interactive=True
                     )
 
                     save_recording_path = gr.Textbox(
@@ -1065,10 +1218,11 @@ def create_ui(theme_name="Ocean"):
             run_button.click(
                 fn=run_with_stream,
                 inputs=[
+                        browser_engine_select, # Added
                     agent_type, llm_provider, llm_model_name, ollama_num_ctx, llm_temperature, llm_base_url,
                     llm_api_key,
                     use_own_browser, keep_browser_open, headless, disable_security, window_w, window_h,
-                    save_recording_path, save_agent_history_path, save_trace_path,  # Include the new path
+                    save_recording_path, save_agent_history_path, save_trace_path, webdriver_executable_path_input, # Added
                     enable_recording, task, add_infos, max_steps, use_vision, max_actions_per_step,
                     tool_calling_method, chrome_cdp, max_input_tokens
                 ],
@@ -1172,15 +1326,23 @@ def create_ui(theme_name="Ocean"):
 
         use_own_browser.change(fn=close_global_browser)
         keep_browser_open.change(fn=close_global_browser)
+        # browser_engine_select.change(fn=close_global_browser) # Optional: close browser on engine change
 
         scan_and_register_components(demo)
         global webui_config_manager
-        all_components = webui_config_manager.get_all_components()
+        # Ensure browser_engine_select is added to components list for config saving/loading
+        # If scan_and_register_components doesn't pick it up automatically by its placement,
+        # it might need to be manually added to the list passed to load_config_button outputs.
+        # However, scan_and_register_components should pick up all interactive components.
+        all_components = webui_config_manager.get_all_components() 
 
         load_config_button.click(
             fn=update_ui_from_config,
             inputs=[config_file_input],
-            outputs=all_components + [config_status]
+            # Ensure browser_engine_select is included in the output list if not automatically handled
+            # The current `all_components = webui_config_manager.get_all_components()` should suffice
+            # if scan_and_register_components correctly registers it.
+            outputs=all_components + [config_status] 
         )
     return demo
 

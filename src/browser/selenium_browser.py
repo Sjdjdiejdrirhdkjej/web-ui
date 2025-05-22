@@ -5,11 +5,11 @@ from selenium.webdriver.remote.webdriver import WebDriver
 from typing import Any, Optional
 
 from .base import AbstractBrowser, AbstractBrowserContext
-from .selenium_context import SeleniumBrowserContext # This will be created in the next step
+from .selenium_context import SeleniumBrowserContext
+from src.utils.webdriver_utils import find_chromedriver_executable # New import
 
 class SeleniumBrowser(AbstractBrowser[SeleniumBrowserContext]):
-    def __init__(self, webdriver_path: Optional[str] = None):
-        self.webdriver_path: Optional[str] = webdriver_path
+    def __init__(self): # Removed webdriver_path from __init__
         self.driver: Optional[WebDriver] = None
         self.launch_options: dict[str, Any] = {}
 
@@ -34,21 +34,28 @@ class SeleniumBrowser(AbstractBrowser[SeleniumBrowserContext]):
         # Add any other desired options from kwargs
         # Example: options.add_argument("--disable-extensions")
 
-        # The executable_path can be passed in kwargs or use self.webdriver_path
-        executable_path = kwargs.get("executable_path", self.webdriver_path)
+        # Determine chromedriver path
+        chromedriver_exe_path = kwargs.get("executable_path")
+        if not chromedriver_exe_path:
+            chromedriver_exe_path = find_chromedriver_executable()
 
         try:
-            if executable_path:
-                self.driver = webdriver.Chrome(executable_path=executable_path, options=options)
+            if chromedriver_exe_path:
+                self.driver = webdriver.Chrome(executable_path=chromedriver_exe_path, options=options)
             else:
-                # Attempt to use WebDriver from PATH if executable_path is not provided
+                # Last resort: try with no explicit path (Selenium checks PATH)
+                print("ChromeDriver executable_path not provided and not found by auto-discovery. Attempting to launch from system PATH.")
                 self.driver = webdriver.Chrome(options=options)
-            # Potentially add a check here to ensure driver started, e.g., by getting title
+            
+            if not self.driver: # Should not happen if webdriver.Chrome() succeeds.
+                 raise RuntimeError("Failed to initialize Selenium WebDriver.")
+
         except Exception as e:
-            # Log error or raise a custom exception
             print(f"Failed to launch Selenium WebDriver: {e}")
+            print("Please ensure ChromeDriver is installed and accessible in your PATH,")
+            print("or provide the 'executable_path' in the browser configuration.")
             self.driver = None
-            raise # Re-raise the exception to signal failure
+            raise # Re-raise the exception
 
     async def new_context(self, **kwargs: Any) -> SeleniumBrowserContext:
         if not self.driver:

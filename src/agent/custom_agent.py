@@ -27,8 +27,8 @@ from browser_use.agent.views import (
     ToolCallingMethod,
 )
 from browser_use.agent.gif import create_history_gif
-from browser_use.browser.browser import Browser
-from browser_use.browser.context import BrowserContext
+from src.browser.base import AbstractBrowser # Changed
+from src.browser.base import AbstractBrowserContext # Changed
 from browser_use.browser.views import BrowserStateHistory
 from browser_use.controller.service import Controller
 from browser_use.telemetry.views import (
@@ -64,8 +64,8 @@ class CustomAgent(Agent):
             llm: BaseChatModel,
             add_infos: str = "",
             # Optional parameters
-            browser: Browser | None = None,
-            browser_context: BrowserContext | None = None,
+            browser: AbstractBrowser | None = None, # Changed
+            browser_context: AbstractBrowserContext | None = None, # Changed
             controller: Controller[Context] = Controller(),
             # Initial agent run parameters
             sensitive_data: Optional[Dict[str, str]] = None,

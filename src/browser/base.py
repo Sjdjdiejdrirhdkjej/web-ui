@@ -60,6 +60,11 @@ class AbstractPage(ABC, Generic[E]):
     async def wait_for_load_state(self, state: Optional[str] = None, timeout: Optional[int] = None) -> None:
         pass
 
+    @abstractmethod
+    async def type_active(self, text: str, timeout: Optional[int] = None) -> None:
+        """Types text into the currently focused element on the page."""
+        pass
+
 class AbstractBrowserContext(ABC, Generic[P]):
     @abstractmethod
     async def new_page(self) -> P:
@@ -71,6 +76,14 @@ class AbstractBrowserContext(ABC, Generic[P]):
 
     @abstractmethod
     async def close(self) -> None:
+        pass
+
+    @abstractmethod
+    async def get_state(self, **kwargs: Any) -> Any: # Define a proper BrowserState Pydantic model later if possible
+        pass
+
+    @abstractmethod
+    async def get_current_page(self) -> P: # P is the generic Page type (AbstractPage)
         pass
 
 
