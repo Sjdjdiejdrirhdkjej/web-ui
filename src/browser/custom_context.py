@@ -1,19 +1,33 @@
-import json
 import logging
-import os
+from typing import Any, TYPE_CHECKING
 
-from browser_use.browser.browser import Browser
-from browser_use.browser.context import BrowserContext, BrowserContextConfig
-from playwright.async_api import Browser as PlaywrightBrowser
 from playwright.async_api import BrowserContext as PlaywrightBrowserContext
+from playwright.async_api import Page as PlaywrightPageType
+
+from .base import AbstractBrowserContext
+
+if TYPE_CHECKING:
+    from .base import AbstractBrowser # To avoid circular import for type hinting
 
 logger = logging.getLogger(__name__)
 
 
-class CustomBrowserContext(BrowserContext):
+class CustomBrowserContext(AbstractBrowserContext[PlaywrightPageType]):
     def __init__(
-            self,
-            browser: "Browser",
-            config: BrowserContextConfig = BrowserContextConfig()
+        self,
+        pw_context: PlaywrightBrowserContext,
+        browser: "AbstractBrowser", # Use forward reference string
+        config: dict[str, Any] | None = None # config is now a dict
     ):
-        super(CustomBrowserContext, self).__init__(browser=browser, config=config)
+        self.pw_context = pw_context
+        self.browser = browser
+        self.config = config if config is not None else {}
+
+    async def new_page(self) -> PlaywrightPageType:
+        return await self.pw_context.new_page()
+
+    async def pages(self) -> list[PlaywrightPageType]:
+        return self.pw_context.pages
+
+    async def close(self) -> None:
+        await self.pw_context.close()
